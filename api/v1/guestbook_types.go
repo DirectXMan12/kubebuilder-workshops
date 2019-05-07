@@ -77,6 +77,9 @@ type StatusCondition struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:priority=0,name=URL,type=string,JSONPath=".status.url",description="GuestBook Frontend URL",format=""
+// +kubebuilder:printcolumn:priority=0,name=Deployment,type=string,JSONPath=".status.conditions[?(@.type==\"DeploymentUpToDate\")].status",description="Is the Deployment Up-To-Date",format=""
+// +kubebuilder:printcolumn:priority=0,name=Service,type=string,JSONPath=".status.conditions[?(@.type==\"ServiceUpToDate\")].status",description="Is the Service Up-To-Date",format=""
 
 // GuestBook is the Schema for the guestbooks API
 type GuestBook struct {
