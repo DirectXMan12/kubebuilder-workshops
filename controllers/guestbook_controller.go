@@ -18,6 +18,8 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"net"
 
 	"github.com/go-logr/logr"
 	apps "k8s.io/api/apps/v1"
@@ -73,11 +75,17 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			Namespace: req.Namespace,
 		},
 	}
+
 	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, depl, func() error {
 		if ownerRef := metav1.GetControllerOf(depl); ownerRef != nil && (ownerRef.Name != req.Name || ownerRef.Kind != "GuestBook" || ownerRef.APIVersion != webappv1.GroupVersion.String()) {
 			log.Info("cowardly refusing to take ownership of somebody else's deployment", "owner", ownerRef)
 
-			// TODO: conditions
+			setCondition(&app.Status, webappv1.GuestBookCondition{
+				Type:    "DeploymentUpToDate",
+				Status:  webappv1.ConditionStatusUnhealthy,
+				Reason:  "OrphanDeployment",
+				Message: "Refusing to take ownership of somebody else's deployment",
+			})
 			return nil
 		}
 
@@ -160,13 +168,33 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		if err := ctrl.SetControllerReference(&app, depl, r.Scheme); err != nil {
 			return err
 		}
+
+		setCondition(&app.Status, webappv1.GuestBookCondition{
+			Type:    "DeploymentUpToDate",
+			Status:  webappv1.ConditionStatusHealthy,
+			Reason:  "EnsuredDeployment",
+			Message: "Ensured deployment was up to date",
+		})
 		return nil
 	}); err != nil {
 		log.Error(err, "unable to ensure deployment is correct")
+		setCondition(&app.Status, webappv1.GuestBookCondition{
+			Type:    "DeploymentUpToDate",
+			Status:  webappv1.ConditionStatusUnhealthy,
+			Reason:  "UpdateError",
+			Message: "Unable to fetch or update deployment",
+		})
+		if err := r.Status().Update(ctx, &app); err != nil {
+			log.Error(err, "unable to update guestbook status")
+		}
 		return ctrl.Result{}, err
 	}
 
 	// ensure there's a service, too!
+	port := int32(80)
+	if app.Spec.Frontend.ServingPort != 0 {
+		port = app.Spec.Frontend.ServingPort
+	}
 	svc := &core.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      req.Name,
@@ -176,14 +204,15 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, svc, func() error {
 		if ownerRef := metav1.GetControllerOf(svc); ownerRef != nil && (ownerRef.Name != req.Name || ownerRef.Kind != "GuestBook" || ownerRef.APIVersion != webappv1.GroupVersion.String()) {
 			log.Info("cowardly refusing to take ownership of somebody else's service", "owner", ownerRef)
-			// TODO: conditions
+			setCondition(&app.Status, webappv1.GuestBookCondition{
+				Type:    "ServiceUpToDate",
+				Status:  webappv1.ConditionStatusUnhealthy,
+				Reason:  "OrphanService",
+				Message: "Refusing to take ownership of somebody else's service",
+			})
 			return nil
 		}
 
-		port := int32(80)
-		if app.Spec.Frontend.ServingPort != 0 {
-			port = app.Spec.Frontend.ServingPort
-		}
 		svc.Spec.Selector = map[string]string{"guestbook": req.Name}
 		// stuff gets defaulted, so make sure to find the right port and modify
 		// (otherwise we'll requeue forever)
@@ -201,9 +230,39 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		if err := ctrl.SetControllerReference(&app, svc, r.Scheme); err != nil {
 			return err
 		}
+		setCondition(&app.Status, webappv1.GuestBookCondition{
+			Type:    "ServiceUpToDate",
+			Status:  webappv1.ConditionStatusHealthy,
+			Reason:  "EnsuredService",
+			Message: "Ensured service was up to date",
+		})
 		return nil
 	}); err != nil {
 		log.Error(err, "unable to ensure service is correct")
+		setCondition(&app.Status, webappv1.GuestBookCondition{
+			Type:    "ServiceUpToDate",
+			Status:  webappv1.ConditionStatusUnhealthy,
+			Reason:  "UpdateError",
+			Message: "Unable to fetch or update service",
+		})
+		if err := r.Status().Update(ctx, &app); err != nil {
+			log.Error(err, "unable to update guestbook status")
+		}
+		return ctrl.Result{}, err
+	}
+
+	if len(svc.Status.LoadBalancer.Ingress) > 0 {
+		host := svc.Status.LoadBalancer.Ingress[0].Hostname
+		if host == "" {
+			host = svc.Status.LoadBalancer.Ingress[0].IP
+		}
+		app.Status.URL = fmt.Sprintf("http://%s", net.JoinHostPort(host, fmt.Sprintf("%v", port)))
+	} else {
+		app.Status.URL = ""
+	}
+
+	if err := r.Status().Update(ctx, &app); err != nil {
+		log.Error(err, "unable to update guestbook status")
 		return ctrl.Result{}, err
 	}
 
@@ -225,6 +284,32 @@ func setEnv(cont *core.Container, key, val string) {
 		envVar = &cont.Env[len(cont.Env)-1]
 	}
 	envVar.Value = val
+}
+
+func setCondition(status *webappv1.GuestBookStatus, targetCond webappv1.GuestBookCondition) {
+	var outCond *webappv1.GuestBookCondition
+	for i, cond := range status.Conditions {
+		if cond.Type == targetCond.Type {
+			outCond = &status.Conditions[i]
+			break
+		}
+	}
+	if outCond == nil {
+		status.Conditions = append(status.Conditions, targetCond)
+		outCond = &status.Conditions[len(status.Conditions)-1]
+		outCond.LastTransitionTime = metav1.Now()
+	} else {
+		lastState := outCond.Status
+		lastTrans := outCond.LastTransitionTime
+		*outCond = targetCond
+		if outCond.Status != lastState {
+			outCond.LastTransitionTime = metav1.Now()
+		} else {
+			outCond.LastTransitionTime = lastTrans
+		}
+	}
+
+	outCond.LastProbeTime = metav1.Now()
 }
 
 func (r *GuestBookReconciler) SetupWithManager(mgr ctrl.Manager) error {
