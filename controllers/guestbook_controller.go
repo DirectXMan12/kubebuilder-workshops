@@ -27,9 +27,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	webappv1 "github.com/directxman12/kubebuilder-workshops/api/v1"
 )
@@ -39,6 +43,13 @@ func ignoreNotFound(err error) error {
 		return nil
 	}
 	return err
+}
+
+func ownedByOther(obj metav1.Object, apiVersion schema.GroupVersion, kind, name string) *metav1.OwnerReference {
+	if ownerRef := metav1.GetControllerOf(obj); ownerRef != nil && (ownerRef.Name != name || ownerRef.Kind != kind || ownerRef.APIVersion != apiVersion.String()) {
+		return ownerRef
+	}
+	return nil
 }
 
 // GuestBookReconciler reconciles a GuestBook object
@@ -51,6 +62,7 @@ type GuestBookReconciler struct {
 // +kubebuilder:rbac:groups=webapp.metamagical.io,resources=guestbooks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=webapp.metamagical.io,resources=guestbooks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;update;watch;list
+// +kubebuilder:rbac:groups=core,resources=services,verbs=get;update;watch;list
 
 func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
@@ -76,19 +88,20 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		},
 	}
 
-	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, depl, func() error {
-		if ownerRef := metav1.GetControllerOf(depl); ownerRef != nil && (ownerRef.Name != req.Name || ownerRef.Kind != "GuestBook" || ownerRef.APIVersion != webappv1.GroupVersion.String()) {
-			log.Info("cowardly refusing to take ownership of somebody else's deployment", "owner", ownerRef)
-
-			setCondition(&app.Status, webappv1.GuestBookCondition{
-				Type:    "DeploymentUpToDate",
-				Status:  webappv1.ConditionStatusUnhealthy,
-				Reason:  "OrphanDeployment",
-				Message: "Refusing to take ownership of somebody else's deployment",
-			})
-			return nil
+	redisFollowerSvc := ""
+	redisLeaderSvc := ""
+	if app.Spec.RedisName != "" {
+		var redis webappv1.Redis
+		if err := r.Get(ctx, types.NamespacedName{Name: app.Spec.RedisName, Namespace: app.Namespace}, &redis); err != nil {
+			log.Error(err, "unable to fetch corresponding redis", "redis", app.Spec.RedisName)
+			return ctrl.Result{}, ignoreNotFound(err)
 		}
+		redisFollowerSvc = redis.Status.FollowerService
+		redisLeaderSvc = redis.Status.LeaderService
+		log.Info("using redis object", "redis", redis, "follower service", redisFollowerSvc, "leader service", redisLeaderSvc)
+	}
 
+	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, depl, func() error {
 		// NB: CreateOrUpdate (and all client methods) modify the passed-in object, so we don't
 		// ever want a direct pointer to our webapp.
 
@@ -129,12 +142,9 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		cont.Image = "gcr.io/google-samples/gb-frontend:v4"
 
 		// and again for env
-		if app.Spec.UseDNS {
-			setEnv(cont, "GET_HOSTS_FROM", "dns")
-		} else {
-			setEnv(cont, "GET_HOSTS_FROM", "env")
-			setEnv(cont, "REDIS_SLAVE_SERVICE_HOST", req.Name+"-redis")
-		}
+		setEnv(cont, "GET_HOSTS_FROM", "env")
+		setEnv(cont, "REDIS_SLAVE_SERVICE_HOST", redisFollowerSvc)
+		setEnv(cont, "REDIS_MASTER_SERVICE_HOST", redisLeaderSvc)
 
 		// copy resources
 		if cont.Resources.Requests == nil {
@@ -169,7 +179,7 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return err
 		}
 
-		setCondition(&app.Status, webappv1.GuestBookCondition{
+		setCondition(&app.Status.Conditions, webappv1.StatusCondition{
 			Type:    "DeploymentUpToDate",
 			Status:  webappv1.ConditionStatusHealthy,
 			Reason:  "EnsuredDeployment",
@@ -178,7 +188,7 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return nil
 	}); err != nil {
 		log.Error(err, "unable to ensure deployment is correct")
-		setCondition(&app.Status, webappv1.GuestBookCondition{
+		setCondition(&app.Status.Conditions, webappv1.StatusCondition{
 			Type:    "DeploymentUpToDate",
 			Status:  webappv1.ConditionStatusUnhealthy,
 			Reason:  "UpdateError",
@@ -202,9 +212,9 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		},
 	}
 	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, svc, func() error {
-		if ownerRef := metav1.GetControllerOf(svc); ownerRef != nil && (ownerRef.Name != req.Name || ownerRef.Kind != "GuestBook" || ownerRef.APIVersion != webappv1.GroupVersion.String()) {
+		if ownerRef := ownedByOther(svc, webappv1.GroupVersion, "GuestBook", req.Name); ownerRef != nil {
 			log.Info("cowardly refusing to take ownership of somebody else's service", "owner", ownerRef)
-			setCondition(&app.Status, webappv1.GuestBookCondition{
+			setCondition(&app.Status.Conditions, webappv1.StatusCondition{
 				Type:    "ServiceUpToDate",
 				Status:  webappv1.ConditionStatusUnhealthy,
 				Reason:  "OrphanService",
@@ -230,7 +240,7 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		if err := ctrl.SetControllerReference(&app, svc, r.Scheme); err != nil {
 			return err
 		}
-		setCondition(&app.Status, webappv1.GuestBookCondition{
+		setCondition(&app.Status.Conditions, webappv1.StatusCondition{
 			Type:    "ServiceUpToDate",
 			Status:  webappv1.ConditionStatusHealthy,
 			Reason:  "EnsuredService",
@@ -239,7 +249,7 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return nil
 	}); err != nil {
 		log.Error(err, "unable to ensure service is correct")
-		setCondition(&app.Status, webappv1.GuestBookCondition{
+		setCondition(&app.Status.Conditions, webappv1.StatusCondition{
 			Type:    "ServiceUpToDate",
 			Status:  webappv1.ConditionStatusUnhealthy,
 			Reason:  "UpdateError",
@@ -286,17 +296,17 @@ func setEnv(cont *core.Container, key, val string) {
 	envVar.Value = val
 }
 
-func setCondition(status *webappv1.GuestBookStatus, targetCond webappv1.GuestBookCondition) {
-	var outCond *webappv1.GuestBookCondition
-	for i, cond := range status.Conditions {
+func setCondition(conds *[]webappv1.StatusCondition, targetCond webappv1.StatusCondition) {
+	var outCond *webappv1.StatusCondition
+	for i, cond := range *conds {
 		if cond.Type == targetCond.Type {
-			outCond = &status.Conditions[i]
+			outCond = &(*conds)[i]
 			break
 		}
 	}
 	if outCond == nil {
-		status.Conditions = append(status.Conditions, targetCond)
-		outCond = &status.Conditions[len(status.Conditions)-1]
+		*conds = append(*conds, targetCond)
+		outCond = &(*conds)[len(*conds)-1]
 		outCond.LastTransitionTime = metav1.Now()
 	} else {
 		lastState := outCond.Status
@@ -313,9 +323,32 @@ func setCondition(status *webappv1.GuestBookStatus, targetCond webappv1.GuestBoo
 }
 
 func (r *GuestBookReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	mgr.GetFieldIndexer().IndexField(&webappv1.GuestBook{}, ".spec.redisName", func(obj runtime.Object) []string {
+		redisName := obj.(*webappv1.GuestBook).Spec.RedisName
+		if redisName == "" {
+			return nil
+		}
+		return []string{redisName}
+	})
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&webappv1.GuestBook{}).
 		Owns(&apps.Deployment{}).
 		Owns(&core.Service{}).
+		Watches(&source.Kind{Type: &webappv1.Redis{}}, &handler.EnqueueRequestsFromMapFunc{
+			ToRequests: handler.ToRequestsFunc(func(obj handler.MapObject) []ctrl.Request {
+				var apps webappv1.GuestBookList
+				if err := r.List(context.Background(), &apps, client.InNamespace(obj.Meta.GetNamespace()), client.MatchingField(".spec.redisName", obj.Meta.GetName())); err != nil {
+					r.Log.Info("unable to get webapps for redis", "redis", obj)
+					return nil
+				}
+
+				res := make([]ctrl.Request, len(apps.Items))
+				for i, app := range apps.Items {
+					res[i].Name = app.Name
+					res[i].Namespace = app.Namespace
+				}
+				return res
+			}),
+		}).
 		Complete(r)
 }
