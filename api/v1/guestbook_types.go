@@ -51,7 +51,7 @@ type GuestBookStatus struct {
 
 	URL string `json:"url,omitempty"`
 
-	Conditions []GuestBookCondition `json:"conditions,omitempty"`
+	Conditions []StatusCondition `json:"conditions,omitempty"`
 }
 
 type ConditionStatus string
@@ -62,7 +62,7 @@ var (
 	ConditionStatusUnknown   ConditionStatus = "Unknown"
 )
 
-type GuestBookCondition struct {
+type StatusCondition struct {
 	Type   string          `json:"type"`
 	Status ConditionStatus `json:"status"`
 	// +optional
