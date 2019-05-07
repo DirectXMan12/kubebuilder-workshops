@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: guestbook-sample
+  namespace: default
+  ownerReferences:
+  - apiVersion: webapp.metamagical.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: GuestBook
+    name: guestbook-sample
+    uid: d337f730-708b-11e9-9ecc-42010a800050
+spec:
+  ports:
+  - name: http
+    nodePort: 30752
+    port: 8080
+    protocol: TCP
+    targetPort: http
+  selector:
+    guestbook: guestbook-sample
+  type: LoadBalancer
