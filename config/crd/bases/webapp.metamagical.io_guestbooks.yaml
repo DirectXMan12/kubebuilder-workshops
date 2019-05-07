@@ -6,6 +6,19 @@ metadata:
   creationTimestamp: null
   name: guestbooks.webapp.metamagical.io
 spec:
+  additionalPrinterColumns:
+  - JSONPath: .status.url
+    description: GuestBook Frontend URL
+    name: URL
+    type: string
+  - JSONPath: .status.conditions[?(@.type=="DeploymentUpToDate")].status
+    description: Is the Deployment Up-To-Date
+    name: Deployment
+    type: string
+  - JSONPath: .status.conditions[?(@.type=="ServiceUpToDate")].status
+    description: Is the Service Up-To-Date
+    name: Service
+    type: string
   group: webapp.metamagical.io
   names:
     kind: GuestBook
