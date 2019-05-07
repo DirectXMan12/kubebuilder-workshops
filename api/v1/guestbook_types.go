@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -27,6 +28,20 @@ import (
 type GuestBookSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	Frontend FrontendSpec `json:"frontend"`
+
+	RedisName string `json:"redisName"`
+}
+
+type FrontendSpec struct {
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	// +optional
+	ServingPort int32 `json:"servingPort,omitempty"`
+
+	// +optional
+	Replicas *int32 `json:"replicas,omitempty"` // If it's nil, we'll use a default
 }
 
 // GuestBookStatus defines the observed state of GuestBook
