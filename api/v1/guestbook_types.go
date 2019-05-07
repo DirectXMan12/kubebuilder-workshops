@@ -48,9 +48,35 @@ type FrontendSpec struct {
 type GuestBookStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	URL string `json:"url,omitempty"`
+
+	Conditions []GuestBookCondition `json:"conditions,omitempty"`
+}
+
+type ConditionStatus string
+
+var (
+	ConditionStatusHealthy   ConditionStatus = "Healthy"
+	ConditionStatusUnhealthy ConditionStatus = "Unhealthy"
+	ConditionStatusUnknown   ConditionStatus = "Unknown"
+)
+
+type GuestBookCondition struct {
+	Type   string          `json:"type"`
+	Status ConditionStatus `json:"status"`
+	// +optional
+	LastProbeTime metav1.Time `json:"lastProbeTime,omitempty"`
+	// +optional
+	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty"`
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 
 // GuestBook is the Schema for the guestbooks API
 type GuestBook struct {
