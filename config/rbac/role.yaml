@@ -1,3 +1,5 @@
+
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -24,6 +26,24 @@ rules:
   - get
   - update
   - patch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - update
+  - watch
+  - list
+- apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - get
+  - update
+  - watch
+  - list
 - apiGroups:
   - webapp.metamagical.io
   resources:

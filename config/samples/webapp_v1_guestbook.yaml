@@ -3,5 +3,10 @@ kind: GuestBook
 metadata:
   name: guestbook-sample
 spec:
-  # Add fields here
-  foo: bar
+  frontend:
+    replicas: 2
+    servingPort: 8080
+    resources:
+      requests:
+        cpu: 10m
+  redisName: "redis-sample"
