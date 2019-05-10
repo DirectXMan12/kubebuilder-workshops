@@ -1,0 +1,7 @@
+apiVersion: webapp.metamagical.io/v1
+kind: GuestBook
+metadata:
+  name: guestbook-sample
+spec:
+  # Add fields here
+  foo: bar
