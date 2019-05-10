@@ -37,6 +37,7 @@ var (
 func init() {
 
 	webappv1.AddToScheme(scheme)
+	webappv1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -59,6 +60,14 @@ func main() {
 	}).SetupWithManager(mgr)
 	if err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GuestBook")
+		os.Exit(1)
+	}
+	err = (&controllers.RedisReconciler{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("Redis"),
+	}).SetupWithManager(mgr)
+	if err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Redis")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
