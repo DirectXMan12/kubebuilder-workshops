@@ -1,0 +1,7 @@
+apiVersion: webapp.metamagical.io/v1
+kind: Redis
+metadata:
+  name: redis-sample
+spec:
+  # Add fields here
+  foo: bar

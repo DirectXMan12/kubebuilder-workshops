@@ -1,0 +1,46 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: manager-role
+rules:
+- apiGroups:
+  - webapp.metamagical.io
+  resources:
+  - guestbooks
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - webapp.metamagical.io
+  resources:
+  - guestbooks/status
+  verbs:
+  - get
+  - update
+  - patch
+- apiGroups:
+  - webapp.metamagical.io
+  resources:
+  - redis
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - webapp.metamagical.io
+  resources:
+  - redis/status
+  verbs:
+  - get
+  - update
+  - patch
