@@ -20,6 +20,8 @@ import (
 	"flag"
 	"os"
 
+	webappv1 "github.com/directxman12/kubebuilder-workshops/api/v1"
+	"github.com/directxman12/kubebuilder-workshops/controllers"
 	"k8s.io/apimachinery/pkg/runtime"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -34,6 +36,7 @@ var (
 
 func init() {
 
+	webappv1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -50,6 +53,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	err = (&controllers.GuestBookReconciler{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("GuestBook"),
+	}).SetupWithManager(mgr)
+	if err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GuestBook")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	setupLog.Info("starting manager")
