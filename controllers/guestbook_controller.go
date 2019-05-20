@@ -61,8 +61,8 @@ type GuestBookReconciler struct {
 
 // +kubebuilder:rbac:groups=webapp.metamagical.io,resources=guestbooks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=webapp.metamagical.io,resources=guestbooks/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;update;watch;list
-// +kubebuilder:rbac:groups=core,resources=services,verbs=get;update;watch;list
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;update;watch;list;create
+// +kubebuilder:rbac:groups=core,resources=services,verbs=get;update;watch;list;create
 
 func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()

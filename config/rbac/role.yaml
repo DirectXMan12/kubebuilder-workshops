@@ -35,6 +35,7 @@ rules:
   - update
   - watch
   - list
+  - create
 - apiGroups:
   - ""
   resources:
@@ -44,6 +45,7 @@ rules:
   - update
   - watch
   - list
+  - create
 - apiGroups:
   - webapp.metamagical.io
   resources:
