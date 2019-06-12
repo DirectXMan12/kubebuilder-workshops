@@ -1,0 +1,3 @@
+version: "2"
+domain: example.com
+repo: github.com/pwittrock/kubebuilder-workshop
