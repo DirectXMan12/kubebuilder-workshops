@@ -1,30 +1,26 @@
 # KubeBuilder Workshops
 
-This repository contains a workshop for building operators with
-KubeBuilder.  The workshop follows along with the [GKE guestbook
-tutorial](https://cloud.google.com/kubernetes-engine/docs/tutorials/guestbook).
+This repository contains a series of similar workshops for building
+operators with KubeBuilder.
 
-If you're here from KubeCon EU (Barcelona) 2019, you've come to the right
-place.  The corresponding slides can be found at
-https://storage.googleapis.com/kubebuilder-workshops/kubecon-eu-2019.pdf.
+Each workshop lives on a different branch:
 
-# Starting Out
+## Branches
 
-Each commit contains progressively more details on building the workshop.
-Take a look at the commit messages, and then start from the `start` tag
-with
+- [kubecon-eu-2019](https://github.com/DirectXMan12/kubebuilder-workshops/tree/kubecon-eu-2019):
+  
+  * **Level**: Intermediate
+  * **Topic**: Write an operator that deploys and manages the standard
+    Kubernetes GuestBook application.  Contains associated slides for
+    "freeform" implementation, plus suggested implementation details as
+    commits.
 
-```bash
-$ git clone https://github.com/directxman12/kubebuilder-workshops --branch start
-```
-
-or (from within the repository)
-
-```bash
-$ git checkout start
-```
-
-You can also start at HEAD, but that spoils the fun :-).
+- [software-architecture-2019](https://github.com/DirectXMan12/kubebuilder-workshops/tree/software-architecture-2019)
+  
+  * **Level**: Basic
+  * **Topic**: Write an operator that deploys and manages MongoDB.
+    Contains step-by-step in-repository instructions without focusing too
+    much on the underlying MongoDB mechanics.
 
 # Contributing
 
