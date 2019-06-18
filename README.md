@@ -363,15 +363,6 @@ $ docker build . -t gcr.io/<project>/kubebuilder-workshop:v1
 $ docker push gcr.io/<project>/kubebuilder-workshop:v1
 ```
 
-Modify the Dockerfile to move the deps earlier in the pipeline
-
-```bash
-# Copy the Go Modules manifests
-COPY go.mod go.mod
-COPY go.sum go.sum
-RUN go mod download
-```
-
 **Note:** Modify the Dockerfile to copy new package dirs
 
 ```bash
@@ -383,16 +374,3 @@ Update `config/default/manager_image_patch.yaml` with the new image name
 ```bash
 kubectl apply -k  config/default/
 ```
-
-
-## Doing Defaulting and Validation with Webhooks
-
-### Install Cert Manager
-
-```bash
-https://docs.cert-manager.io/en/latest/getting-started/install/kubernetes.html#installing-with-regular-manifests
-```
-
-### Update Manifests to install webhook and cainjection
-
-update `config/default/kustomization.yaml`
