@@ -2,6 +2,10 @@ This is not an officially supported Google product
 
 This is a demo for the Kubernetes API Deep Dive talk at O'Reilly Software Architecture 2019
 
+A fully-implemented version of this demo can be found on the
+[solutions/software-architecture-2019](https://github.com/DirectXMan12/kubebuilder-workshops/tree/solutions/software-architecture-2019)
+branch for reference.
+
 # Kubebuilder Workshop
 
 The Kubebuilder Workshop provides a hands-on experience creating Kubernetes APIs using kubebuilder.
