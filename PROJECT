@@ -1,3 +1,7 @@
 version: "2"
 domain: example.com
 repo: github.com/pwittrock/kubebuilder-workshop
+resources:
+- group: databases
+  version: v1alpha1
+  kind: MongoDB
