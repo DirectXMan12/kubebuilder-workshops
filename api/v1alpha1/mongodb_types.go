@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -25,17 +27,35 @@ import (
 
 // MongoDBSpec defines the desired state of MongoDB
 type MongoDBSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// the number of MongoDB replicas
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// the volume size for each instance
+	// +optional
+	Storage *string `json:"storage,omitempty"`
 }
 
 // MongoDBStatus defines the observed state of MongoDB
 type MongoDBStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// the status of the StatefuleSet managed by MongoDB
+	StatefulSetStatus appsv1.StatefulSetStatus `json:"statefulSetStatus,omitempty"`
+
+	// the status of the Service managed by MongoDB
+	ServiceStatus corev1.ServiceStatus `json:"serviceStatus,omitempty"`
+
+	ClusterIP string `json:"clusterIP,omitempty"`
 }
 
+// +kubebuilder:printcolumn:name="storage",type="string",JSONPath=".spec.storage",format="byte"
+// +kubebuilder:printcolumn:name="replicas",type="integer",JSONPath=".spec.replicas",format="int32"
+// +kubebuilder:printcolumn:name="ready replicas",type="integer",JSONPath=".status.statefulSetStatus.readyReplicas",format="int32"
+// +kubebuilder:printcolumn:name="current replicas",type="integer",JSONPath=".status.statefulSetStatus.currentReplicas",format="int32"
+// +kubebuilder:printcolumn:name="cluster-ip",type="string",JSONPath=".status.clusterIP",format="byte"
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.statefulSetStatus.replicas
 
 // MongoDB is the Schema for the mongodbs API
 type MongoDB struct {
