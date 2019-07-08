@@ -22,6 +22,8 @@ import (
 
 	databasesv1alpha1 "github.com/pwittrock/kubebuilder-workshop/api/v1alpha1"
 	"github.com/pwittrock/kubebuilder-workshop/controllers"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -38,6 +40,9 @@ func init() {
 
 	_ = databasesv1alpha1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
+
+	appsv1.AddToScheme(scheme)
+	corev1.AddToScheme(scheme)
 }
 
 func main() {
@@ -61,6 +66,7 @@ func main() {
 	if err = (&controllers.MongoDBReconciler{
 		Client: mgr.GetClient(),
 		Log:    ctrl.Log.WithName("controllers").WithName("MongoDB"),
+		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MongoDB")
 		os.Exit(1)
