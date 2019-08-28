@@ -55,14 +55,31 @@ func (r *RedisReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.ensureLeader(ctx, log, &redis); err != nil {
+	var conditions []webappv1.StatusCondition
+
+	if newConds, err := r.ensureLeader(ctx, log, &redis); err != nil {
+		redis.Status.Conditions = conditions
+		if err := r.Status().Update(ctx, &redis); err != nil {
+			log.Error(err, "unable to update redis status")
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, err
+	} else {
+		conditions = append(conditions, newConds...)
 	}
 
-	if err := r.ensureFollowers(ctx, log, &redis); err != nil {
+	if newConds, err := r.ensureFollowers(ctx, log, &redis); err != nil {
+		redis.Status.Conditions = conditions
+		if err := r.Status().Update(ctx, &redis); err != nil {
+			log.Error(err, "unable to update redis status")
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, err
+	} else {
+		conditions = append(conditions, newConds...)
 	}
 
+	redis.Status.Conditions = conditions
 	if err := r.Status().Update(ctx, &redis); err != nil {
 		log.Error(err, "unable to update redis status")
 		return ctrl.Result{}, err
@@ -78,133 +95,138 @@ type deplCfg struct {
 	role     string
 }
 
-func (r *RedisReconciler) ensureDeplAndSvc(ctx context.Context, log logr.Logger, redis *webappv1.Redis, cfg deplCfg) (*core.Service, error) {
+func (r *RedisReconciler) ensureDeplAndSvc(ctx context.Context, log logr.Logger, redis *webappv1.Redis, cfg deplCfg) (*core.Service, []webappv1.StatusCondition, error) {
 	sel := map[string]string{
 		"role":  cfg.role,
 		"redis": redis.Name,
 	}
 
-	depl := &apps.Deployment{ObjectMeta: metav1.ObjectMeta{Name: redis.Name + strings.ToLower(cfg.role), Namespace: redis.Namespace}}
-	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, depl, func() error {
-		if cfg.replicas != nil {
-			replicas := *cfg.replicas
-			depl.Spec.Replicas = &replicas
-		} else {
-			depl.Spec.Replicas = nil
-		}
+	var conditions []webappv1.StatusCondition
 
-		depl.Spec.Selector = &metav1.LabelSelector{
-			MatchLabels: sel,
-		}
-		depl.Spec.Template.ObjectMeta.Labels = sel
-		depl.Spec.Template.Spec = core.PodSpec{
-			Containers: []core.Container{
-				{
-					Name:  "redis",
-					Image: cfg.image,
-					Ports: []core.ContainerPort{{ContainerPort: 6379}},
+	depl := &apps.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: redis.Name + strings.ToLower(cfg.role), Namespace: redis.Namespace},
+		Spec: apps.DeploymentSpec{
+			Replicas: cfg.replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: sel,
+			},
+			Template: core.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: sel},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Name: "redis",
+							Image: cfg.image,
+							Ports: []core.ContainerPort{{ContainerPort: 6379}},
+							Env: cfg.env,
+						},
+					},
 				},
 			},
-		}
+		},
+	}
 
-		for _, envVar := range cfg.env {
-			setEnv(&depl.Spec.Template.Spec.Containers[0], envVar.Name, envVar.Value)
-		}
+	if err := ctrl.SetControllerReference(redis, depl, r.Scheme); err != nil {
+		conditions = append(conditions, webappv1.StatusCondition{
+			Type:    cfg.role + "DeploymentUpToDate",
+			Status:  webappv1.ConditionStatusUnhealthy,
+			Reason:  "ControllerRefError",
+			Message: "Unable to set controller reference",
+		}, webappv1.StatusCondition{
+			Type:    cfg.role + "ServiceUpToDate",
+			Status:  webappv1.ConditionStatusUnknown,
+			Reason:  "BlockedError",
+			Message: "Unable to update the deployment first",
+		})
+		return nil, conditions, err
+	}
 
-		if err := ctrl.SetControllerReference(redis, depl, r.Scheme); err != nil {
-			return err
-		}
 
-		setCondition(&redis.Status.Conditions, webappv1.StatusCondition{
+	if err := r.Patch(ctx, depl, client.Apply, client.ForceOwnership, client.FieldOwner("redis-controller")); err != nil {
+		log.Error(err, "unable to ensure deployment is up to date", "role", cfg.role)
+		conditions = append(conditions, webappv1.StatusCondition{
+			Type:    cfg.role + "DeploymentUpToDate",
+			Status:  webappv1.ConditionStatusUnhealthy,
+			Reason:  "UpdateError",
+			Message: "Unable to fetch or update deployment",
+		}, webappv1.StatusCondition{
+			Type:    cfg.role + "ServiceUpToDate",
+			Status:  webappv1.ConditionStatusUnknown,
+			Reason:  "BlockedError",
+			Message: "Unable to update the deployment first",
+		})
+		// TODO: preserve service condition...
+		return nil, conditions, err
+	} else {
+		conditions = append(conditions, webappv1.StatusCondition{
 			Type:    "DeploymentUpToDate",
 			Status:  webappv1.ConditionStatusHealthy,
 			Reason:  "EnsuredDeployment",
 			Message: "Ensured deployment was up to date",
 		})
+	}
 
-		return nil
-	}); err != nil {
-		log.Error(err, "unable to ensure deployment is up to date", "role", cfg.role)
-		setCondition(&redis.Status.Conditions, webappv1.StatusCondition{
-			Type:    cfg.role + "DeploymentUpToDate",
+	svcName := redis.Name + "-" + strings.ToLower(cfg.role)
+	svc := &core.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: svcName, Namespace: redis.Namespace},
+		Spec: core.ServiceSpec{
+			Selector: sel,
+			Ports: []core.ServicePort{{Port: 6379, TargetPort: intstr.FromInt(6379)}},
+		},
+	}
+
+	// set the owner so that garbage collection kicks in
+	if err := ctrl.SetControllerReference(redis, svc, r.Scheme); err != nil {
+		conditions = append(conditions, webappv1.StatusCondition{
+			Type:    cfg.role + "ServiceUpToDate",
+			Status:  webappv1.ConditionStatusUnhealthy,
+			Reason:  "ControllerRefError",
+			Message: "Unable to set controller reference",
+		})
+		return nil, conditions, err
+	}
+
+	// TODO
+	/*
+		setCondition(&redis.Status.Conditions, )
+	*/
+
+	if err := r.Patch(ctx, svc, client.Apply, client.ForceOwnership, client.FieldOwner("redis-contoller")); err != nil { 
+		log.Error(err, "unable to ensure service is up to date", "role", cfg.role)
+		conditions = append(conditions, webappv1.StatusCondition{
+			Type:    cfg.role + "ServiceUpToDate",
 			Status:  webappv1.ConditionStatusUnhealthy,
 			Reason:  "UpdateError",
 			Message: "Unable to fetch or update deployment",
 		})
-		if err := r.Status().Update(ctx, redis); err != nil {
-			log.Error(err, "unable to update redis status")
-		}
-		return nil, err
-	}
-
-	svcName := redis.Name + "-" + strings.ToLower(cfg.role)
-	svc := &core.Service{ObjectMeta: metav1.ObjectMeta{Name: svcName, Namespace: redis.Namespace}}
-	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, svc, func() error {
-		if ownerRef := ownedByOther(svc, webappv1.GroupVersion, "Redis", redis.Name); ownerRef != nil {
-			log.Info("cowardly refusing to take ownership of somebody else's service", "owner", ownerRef, "service", svc.Name)
-			setCondition(&redis.Status.Conditions, webappv1.StatusCondition{
-				Type:    cfg.role + "ServiceUpToDate",
-				Status:  webappv1.ConditionStatusUnhealthy,
-				Reason:  "OrphanService",
-				Message: "Refusing to take ownership of somebody else's service",
-			})
-			return nil
-		}
-
-		svc.Spec.Selector = sel
-		// stuff gets defaulted, so make sure to find the right port and modify
-		// (otherwise we'll requeue forever)
-		if len(svc.Spec.Ports) == 0 {
-			svc.Spec.Ports = append(svc.Spec.Ports, core.ServicePort{})
-		}
-		svcPort := &svc.Spec.Ports[0]
-		svcPort.Port = 6379
-		svcPort.TargetPort = intstr.FromInt(6379)
-
-		// set the owner so that garbage collection kicks in
-		if err := ctrl.SetControllerReference(redis, svc, r.Scheme); err != nil {
-			return err
-		}
-		setCondition(&redis.Status.Conditions, webappv1.StatusCondition{
+		return svc, conditions, err
+	} else {
+		conditions = append(conditions, webappv1.StatusCondition{
 			Type:    cfg.role + "ServiceUpToDate",
 			Status:  webappv1.ConditionStatusHealthy,
 			Reason:  "EnsuredService",
 			Message: "Ensured service was up to date",
 		})
-		return nil
-	}); err != nil {
-		log.Error(err, "unable to ensure service is up to date", "role", cfg.role)
-		setCondition(&redis.Status.Conditions, webappv1.StatusCondition{
-			Type:    cfg.role + "ServiceUpToDate",
-			Status:  webappv1.ConditionStatusUnhealthy,
-			Reason:  "UpdateError",
-			Message: "Unable to fetch or update deployment",
-		})
-		if err := r.Status().Update(ctx, redis); err != nil {
-			log.Error(err, "unable to update redis status")
-		}
-		return svc, err
 	}
 
-	return svc, nil
+	return svc, conditions, nil
 }
 
-func (r *RedisReconciler) ensureLeader(ctx context.Context, log logr.Logger, redis *webappv1.Redis) error {
-
-	leaderSvc, err := r.ensureDeplAndSvc(ctx, log, redis, deplCfg{
+func (r *RedisReconciler) ensureLeader(ctx context.Context, log logr.Logger, redis *webappv1.Redis) ([]webappv1.StatusCondition, error) {
+	leaderSvc, conditions, err := r.ensureDeplAndSvc(ctx, log, redis, deplCfg{
 		role:  "Leader",
 		image: "k8s.gcr.io/redis:e2e",
 	})
 	if err != nil {
-		return err
+		return conditions, err
 	}
 	redis.Status.LeaderService = leaderSvc.Name
 
-	return nil
+	return conditions, nil
 }
 
-func (r *RedisReconciler) ensureFollowers(ctx context.Context, log logr.Logger, redis *webappv1.Redis) error {
-	followerSvc, err := r.ensureDeplAndSvc(ctx, log, redis, deplCfg{
+func (r *RedisReconciler) ensureFollowers(ctx context.Context, log logr.Logger, redis *webappv1.Redis) ([]webappv1.StatusCondition, error) {
+	followerSvc, conditions, err := r.ensureDeplAndSvc(ctx, log, redis, deplCfg{
 		role:     "Follower",
 		image:    "gcr.io/google_samples/gb-redisslave:v1",
 		replicas: redis.Spec.FollowerReplicas,
@@ -214,11 +236,11 @@ func (r *RedisReconciler) ensureFollowers(ctx context.Context, log logr.Logger, 
 		},
 	})
 	if err != nil {
-		return err
+		return conditions, err
 	}
 	redis.Status.FollowerService = followerSvc.Name
 
-	return nil
+	return conditions, nil
 }
 
 func (r *RedisReconciler) SetupWithManager(mgr ctrl.Manager) error {

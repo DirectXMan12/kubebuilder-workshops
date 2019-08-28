@@ -79,15 +79,6 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, err
 	}
 
-	// create or update the deployment
-	depl := &apps.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			// we'll make things simple by matching name to the name of our guestbook
-			Name:      req.Name,
-			Namespace: req.Namespace,
-		},
-	}
-
 	redisFollowerSvc := ""
 	redisLeaderSvc := ""
 	if app.Spec.RedisName != "" {
@@ -101,104 +92,71 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		log.Info("using redis object", "redis", redis, "follower service", redisFollowerSvc, "leader service", redisLeaderSvc)
 	}
 
-	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, depl, func() error {
-		// NB: CreateOrUpdate (and all client methods) modify the passed-in object, so we don't
-		// ever want a direct pointer to our webapp.
+	var conditions []webappv1.StatusCondition
+	defer func() {
+		app.Status.Conditions = conditions
+		if err := r.Status().Patch(ctx, &app, client.Apply, client.ForceOwnership, client.FieldOwner("guestbook-controller")); err != nil {
+			log.Error(err, "unable to app update guestbook status")
+		}
+	}()
 
-		// set the replicas
-		replicas := int32(1)
-		if app.Spec.Frontend.Replicas != nil {
-			replicas = *app.Spec.Frontend.Replicas
-		}
-		depl.Spec.Replicas = &replicas
+	// create or update the deployment
+	depl := &apps.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			// we'll make things simple by matching name to the name of our guestbook
+			Name:      req.Name,
+			Namespace: req.Namespace,
+		},
+		Spec: apps.DeploymentSpec{
+			Replicas: app.Spec.Frontend.Replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"guestbook": req.Name},
+			},
+			Template: core.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"guestbook": req.Name}},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Name: "frontend",
+							Image: "gcr.io/google-samples/gb-frontend:v4",
+							Env: []core.EnvVar{
+								{Name: "GET_HOSTS_FROM", Value: "env"},
+								{Name: "REDIS_SLAVE_SERVICE_HOST", Value: redisFollowerSvc},
+								{Name: "REDIS_MASTER_SERVICE_HOST", Value: redisLeaderSvc},
+							},
+							Resources: app.Spec.Frontend.Resources,
+							Ports: []core.ContainerPort{
+								{Name: "http", ContainerPort: 80},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 
-		// set a label for our service and deployment
-		if depl.Spec.Template.ObjectMeta.Labels == nil {
-			depl.Spec.Template.ObjectMeta.Labels = map[string]string{}
-		}
-		depl.Spec.Template.ObjectMeta.Labels["guestbook"] = req.Name
-		depl.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{
-			"guestbook": req.Name,
-		}}
+	if err := ctrl.SetControllerReference(&app, depl, r.Scheme); err != nil {
+		// TODO: preserve conditions?
+		return ctrl.Result{}, err
+	}
 
-		// make sure we actually run what we want, though
-		var cont *core.Container
-		// find the right container
-		containers := depl.Spec.Template.Spec.Containers
-		for i, iterCont := range containers {
-			if iterCont.Name == "frontend" {
-				cont = &depl.Spec.Template.Spec.Containers[i]
-				break
-			}
-		}
-		if cont == nil {
-			depl.Spec.Template.Spec.Containers = append(depl.Spec.Template.Spec.Containers, core.Container{
-				Name: "frontend",
-			})
-			cont = &depl.Spec.Template.Spec.Containers[len(depl.Spec.Template.Spec.Containers)-1]
-		}
-
-		// (this gets easier with server-side apply)
-		cont.Image = "gcr.io/google-samples/gb-frontend:v4"
-
-		// and again for env
-		setEnv(cont, "GET_HOSTS_FROM", "env")
-		setEnv(cont, "REDIS_SLAVE_SERVICE_HOST", redisFollowerSvc)
-		setEnv(cont, "REDIS_MASTER_SERVICE_HOST", redisLeaderSvc)
-
-		// copy resources
-		if cont.Resources.Requests == nil {
-			cont.Resources.Requests = make(core.ResourceList)
-		}
-		for res, val := range app.Spec.Frontend.Resources.Requests {
-			cont.Resources.Requests[res] = val
-		}
-		if cont.Resources.Limits == nil {
-			cont.Resources.Limits = make(core.ResourceList)
-		}
-		for res, val := range app.Spec.Frontend.Resources.Limits {
-			cont.Resources.Limits[res] = val
-		}
-
-		// and again for the port
-		var port *core.ContainerPort
-		for i, iterPort := range cont.Ports {
-			if iterPort.Name == "http" {
-				port = &cont.Ports[i]
-				break
-			}
-		}
-		if port == nil {
-			cont.Ports = append(cont.Ports, core.ContainerPort{Name: "http"})
-			port = &cont.Ports[len(cont.Ports)-1]
-		}
-		port.ContainerPort = 80
-
-		// set the owner so that garbage collection kicks in
-		if err := ctrl.SetControllerReference(&app, depl, r.Scheme); err != nil {
-			return err
-		}
-
-		setCondition(&app.Status.Conditions, webappv1.StatusCondition{
-			Type:    "DeploymentUpToDate",
-			Status:  webappv1.ConditionStatusHealthy,
-			Reason:  "EnsuredDeployment",
-			Message: "Ensured deployment was up to date",
-		})
-		return nil
-	}); err != nil {
-		log.Error(err, "unable to ensure deployment is correct")
-		setCondition(&app.Status.Conditions, webappv1.StatusCondition{
+	if err := r.Patch(ctx, depl, client.Apply, client.ForceOwnership, client.FieldOwner("guestbook-controller")); err != nil {
+		conditions = append(conditions, webappv1.StatusCondition{
 			Type:    "DeploymentUpToDate",
 			Status:  webappv1.ConditionStatusUnhealthy,
 			Reason:  "UpdateError",
 			Message: "Unable to fetch or update deployment",
 		})
-		if err := r.Status().Update(ctx, &app); err != nil {
-			log.Error(err, "unable to update guestbook status")
-		}
 		return ctrl.Result{}, err
 	}
+
+	conditions = append(conditions, webappv1.StatusCondition{
+		Type:    "DeploymentUpToDate",
+		Status:  webappv1.ConditionStatusHealthy,
+		Reason:  "EnsuredDeployment",
+		Message: "Ensured deployment was up to date",
+	})
+
 
 	// ensure there's a service, too!
 	port := int32(80)
@@ -210,56 +168,38 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			Name:      req.Name,
 			Namespace: req.Namespace,
 		},
+		Spec: core.ServiceSpec{
+			Selector: map[string]string{"guestbook": req.Name},
+			Ports: []core.ServicePort{
+				{
+					Name: "http",
+					Port: port,
+					TargetPort: intstr.FromString("http"),
+				},
+			},
+			Type: "LoadBalancer",
+		},
 	}
-	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, svc, func() error {
-		if ownerRef := ownedByOther(svc, webappv1.GroupVersion, "GuestBook", req.Name); ownerRef != nil {
-			log.Info("cowardly refusing to take ownership of somebody else's service", "owner", ownerRef)
-			setCondition(&app.Status.Conditions, webappv1.StatusCondition{
-				Type:    "ServiceUpToDate",
-				Status:  webappv1.ConditionStatusUnhealthy,
-				Reason:  "OrphanService",
-				Message: "Refusing to take ownership of somebody else's service",
-			})
-			return nil
-		}
-
-		svc.Spec.Selector = map[string]string{"guestbook": req.Name}
-		// stuff gets defaulted, so make sure to find the right port and modify
-		// (otherwise we'll requeue forever)
-		if len(svc.Spec.Ports) == 0 {
-			svc.Spec.Ports = append(svc.Spec.Ports, core.ServicePort{})
-		}
-		svcPort := &svc.Spec.Ports[0]
-		svcPort.Name = "http"
-		svcPort.Port = port
-		svcPort.TargetPort = intstr.FromString("http")
-
-		svc.Spec.Type = "LoadBalancer"
-
-		// set the owner so that garbage collection kicks in
-		if err := ctrl.SetControllerReference(&app, svc, r.Scheme); err != nil {
-			return err
-		}
-		setCondition(&app.Status.Conditions, webappv1.StatusCondition{
-			Type:    "ServiceUpToDate",
-			Status:  webappv1.ConditionStatusHealthy,
-			Reason:  "EnsuredService",
-			Message: "Ensured service was up to date",
-		})
-		return nil
-	}); err != nil {
-		log.Error(err, "unable to ensure service is correct")
-		setCondition(&app.Status.Conditions, webappv1.StatusCondition{
+	if err := ctrl.SetControllerReference(&app, svc, r.Scheme); err != nil {
+		// TODO: preserve conditions
+		return ctrl.Result{}, err
+	}
+	if err := r.Patch(ctx, depl, client.Apply, client.ForceOwnership, client.FieldOwner("guestbook-controller")); err != nil {
+		conditions = append(conditions, webappv1.StatusCondition{
 			Type:    "ServiceUpToDate",
 			Status:  webappv1.ConditionStatusUnhealthy,
 			Reason:  "UpdateError",
 			Message: "Unable to fetch or update service",
 		})
-		if err := r.Status().Update(ctx, &app); err != nil {
-			log.Error(err, "unable to update guestbook status")
-		}
 		return ctrl.Result{}, err
 	}
+
+	conditions = append(conditions, webappv1.StatusCondition{
+		Type:    "ServiceUpToDate",
+		Status:  webappv1.ConditionStatusHealthy,
+		Reason:  "EnsuredService",
+		Message: "Ensured service was up to date",
+	})
 
 	if len(svc.Status.LoadBalancer.Ingress) > 0 {
 		host := svc.Status.LoadBalancer.Ingress[0].Hostname
@@ -271,55 +211,9 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		app.Status.URL = ""
 	}
 
-	if err := r.Status().Update(ctx, &app); err != nil {
-		log.Error(err, "unable to update guestbook status")
-		return ctrl.Result{}, err
-	}
+	// status is updated in defer
 
 	return ctrl.Result{}, nil
-}
-
-func setEnv(cont *core.Container, key, val string) {
-	var envVar *core.EnvVar
-	for i, iterVar := range cont.Env {
-		if iterVar.Name == key {
-			envVar = &cont.Env[i] // index to avoid capturing the iteration variable
-			break
-		}
-	}
-	if envVar == nil {
-		cont.Env = append(cont.Env, core.EnvVar{
-			Name: key,
-		})
-		envVar = &cont.Env[len(cont.Env)-1]
-	}
-	envVar.Value = val
-}
-
-func setCondition(conds *[]webappv1.StatusCondition, targetCond webappv1.StatusCondition) {
-	var outCond *webappv1.StatusCondition
-	for i, cond := range *conds {
-		if cond.Type == targetCond.Type {
-			outCond = &(*conds)[i]
-			break
-		}
-	}
-	if outCond == nil {
-		*conds = append(*conds, targetCond)
-		outCond = &(*conds)[len(*conds)-1]
-		outCond.LastTransitionTime = metav1.Now()
-	} else {
-		lastState := outCond.Status
-		lastTrans := outCond.LastTransitionTime
-		*outCond = targetCond
-		if outCond.Status != lastState {
-			outCond.LastTransitionTime = metav1.Now()
-		} else {
-			outCond.LastTransitionTime = lastTrans
-		}
-	}
-
-	outCond.LastProbeTime = metav1.Now()
 }
 
 func (r *GuestBookReconciler) SetupWithManager(mgr ctrl.Manager) error {
