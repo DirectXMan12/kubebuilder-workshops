@@ -1,0 +1,7 @@
+version: "2"
+domain: metamagical.dev
+repo: workshop-code
+resources:
+- group: webapp
+  version: v1
+  kind: GuestBook
