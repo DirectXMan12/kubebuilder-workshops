@@ -1,0 +1,43 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: guestbook-sample
+  namespace: default
+  ownerReferences:
+  - apiVersion: webapp.metamagical.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: GuestBook
+    name: guestbook-sample
+    uid: d337f730-708b-11e9-9ecc-42010a800050
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      guestbook: guestbook-sample
+  template:
+    metadata:
+      labels:
+        guestbook: guestbook-sample
+    spec:
+      containers:
+      - env:
+        - name: GET_HOSTS_FROM
+          value: env
+
+        # NB(directxman12): sorry about these environment variable names --
+        # they're what the official sample uses (since they used to be the
+        # official terms for Redis).  We should change them.
+        - name: REDIS_MASTER_SERVICE_HOST
+          value: redis-sample-leader
+        - name: REDIS_SLAVE_SERVICE_HOST
+          value: redis-sample-leader
+        image: gcr.io/google-samples/gb-frontend:v4
+        name: frontend
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 10m

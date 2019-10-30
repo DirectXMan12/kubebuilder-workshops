@@ -1,34 +1,35 @@
-# KubeBuilder Workshops
+# Zero To Operator (KubeCon US 2019)
 
-This repository contains a series of similar workshops for building
-operators with KubeBuilder.
+This contains the code for the KubeCon US 2019 workshop "Zero to
+Operator", which walks through building the GuestBook operator, but this
+time with newer Kubernetes features, like declarative defaulting and
+server-side apply.
 
-Each workshop lives on a different branch:
+The corresponding slides can be found at
+https://pres.metamagical.dev/kubecon-us-2019.
 
-## Branches
+Other workshops can be found on other branches.  Check out the [master
+branch's
+README](https://github.com/DirectXMan12/kubebuilder-workshops/blob/master/README.md)
+for more info.
 
-- [kubecon-eu-2019](https://github.com/DirectXMan12/kubebuilder-workshops/tree/kubecon-eu-2019):
-  
-  * **Level**: Intermediate
-  * **Topic**: Write an operator that deploys and manages the standard
-    Kubernetes GuestBook application.  Contains associated slides for
-    "freeform" implementation, plus suggested implementation details as
-    commits.
+# Starting Out
 
-- [software-architecture-2019](https://github.com/DirectXMan12/kubebuilder-workshops/tree/software-architecture-2019)
-  
-  * **Level**: Basic
-  * **Topic**: Write an operator that deploys and manages MongoDB.
-    Contains step-by-step in-repository instructions without focusing too
-    much on the underlying MongoDB mechanics.
+Each commit contains progressively more details on building the workshop.
+Take a look at the commit messages, and then start from the
+`start-kubecon-us-2019` tag with
 
-- [kubecon-us-2019](https://github.com/DirectXMan12/kubebuilder-workshops/tree/kubecon-us-2019):
-  
-  * **Level**: Intermediate
-  * **Topic**: Write an operator that deploys and manages the standard
-    Kubernetes GuestBook application, but focusing on new extensibility
-    features, like declarative defaulting a server-side apply.  Contains
-    associated slides and suggested implementation steps.
+```bash
+$ git clone https://github.com/directxman12/kubebuilder-workshops --branch start-kubecon-us-2019
+```
+
+or (from within the repository)
+
+```bash
+$ git checkout start-kubecon-us-2019
+```
+
+You can also start at HEAD, but that spoils the fun :-).
 
 # Contributing
 
