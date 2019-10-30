@@ -3,5 +3,8 @@ kind: GuestBook
 metadata:
   name: guestbook-sample
 spec:
-  # Add fields here
-  foo: bar
+  redisName: redis-sample
+  frontend:
+    resources:
+      requests:
+        cpu: 80m
