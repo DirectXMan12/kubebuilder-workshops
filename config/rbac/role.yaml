@@ -26,3 +26,23 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - webapp.metamagical.dev
+  resources:
+  - redis
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - webapp.metamagical.dev
+  resources:
+  - redis/status
+  verbs:
+  - get
+  - patch
+  - update

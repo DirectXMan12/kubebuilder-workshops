@@ -1,0 +1,5 @@
+apiVersion: webapp.metamagical.dev/v1
+kind: Redis
+metadata:
+  name: redis-sample
+spec: {}
