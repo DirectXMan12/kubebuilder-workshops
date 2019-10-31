@@ -38,10 +38,47 @@ type GuestBookReconciler struct {
 // +kubebuilder:rbac:groups=webapp.metamagical.dev,resources=guestbooks/status,verbs=get;update;patch
 
 func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	_ = context.Background()
+	ctx := context.Background()
 	_ = r.Log.WithValues("guestbook", req.NamespacedName)
 
-	// your logic here
+	var book webappv1.GuestBook
+	if err := r.Get(ctx, req.NamespacedName, &book); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	var redis webappv1.Redis
+	redisName := client.ObjectKey{Name: book.Spec.RedisName, Namespace: req.Namespace}
+	if err := r.Get(ctx, redisName, &redis); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	deployment, err := r.desiredDeployment(book, redis)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	svc, err := r.desiredService(book)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	applyOpts := []client.PatchOption{client.ForceOwnership, client.FieldOwner("guestbook-controller")}
+
+	err = r.Patch(ctx, &deployment, client.Apply, applyOpts...)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	err = r.Patch(ctx, &svc, client.Apply, applyOpts...)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	book.Status.URL = urlForService(svc, book.Spec.Frontend.ServingPort)
+
+	err = r.Status().Update(ctx, &book)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
