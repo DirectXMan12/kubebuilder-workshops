@@ -17,6 +17,7 @@ limitations under the License.
 package controllers
 
 import (
+	"context"
 	"fmt"
 	"net"
 
@@ -25,6 +26,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	webappv1 "workshop-code/api/v1"
 )
@@ -115,4 +118,24 @@ func urlForService(svc corev1.Service, port int32) string {
 	}
 
 	return fmt.Sprintf("http://%s", net.JoinHostPort(host, fmt.Sprintf("%v", port)))
+}
+
+func (r *GuestBookReconciler) booksUsingRedis(obj handler.MapObject) []ctrl.Request {
+	listOptions := []client.ListOption{
+		// matching our index
+		client.MatchingField(".spec.redisName", obj.Meta.GetName()),
+		// in the right namespace
+		client.InNamespace(obj.Meta.GetNamespace()),
+	}
+	var list webappv1.GuestBookList
+	if err := r.List(context.Background(), &list, listOptions...); err != nil {
+		// TODO: we should log here!
+		return nil
+	}
+	res := make([]ctrl.Request, len(list.Items))
+	for i, book := range list.Items {
+		res[i].Name = book.Name
+		res[i].Namespace = book.Namespace
+	}
+	return res
 }

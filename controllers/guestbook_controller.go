@@ -20,9 +20,13 @@ import (
 	"context"
 
 	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	webappv1 "workshop-code/api/v1"
 )
@@ -39,7 +43,9 @@ type GuestBookReconciler struct {
 
 func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
-	_ = r.Log.WithValues("guestbook", req.NamespacedName)
+	log := r.Log.WithValues("guestbook", req.NamespacedName)
+
+	log.Info("reconciling guestbook")
 
 	var book webappv1.GuestBook
 	if err := r.Get(ctx, req.NamespacedName, &book); err != nil {
@@ -80,11 +86,29 @@ func (r *GuestBookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, err
 	}
 
+	log.Info("reconciled guestbook")
 	return ctrl.Result{}, nil
 }
 
 func (r *GuestBookReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	mgr.GetFieldIndexer().IndexField(
+		&webappv1.GuestBook{}, ".spec.redisName",
+		func(obj runtime.Object) []string {
+			redisName := obj.(*webappv1.GuestBook).Spec.RedisName
+			if redisName == "" {
+				return nil
+			}
+			return []string{redisName}
+		})
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&webappv1.GuestBook{}).
+		Owns(&corev1.Service{}).
+		Owns(&appsv1.Deployment{}).
+		Watches(
+			&source.Kind{Type: &webappv1.Redis{}},
+			&handler.EnqueueRequestsFromMapFunc{
+				ToRequests: handler.ToRequestsFunc(r.booksUsingRedis),
+			}).
 		Complete(r)
 }
