@@ -20,6 +20,8 @@ import (
 	"context"
 
 	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,16 +40,68 @@ type RedisReconciler struct {
 // +kubebuilder:rbac:groups=webapp.metamagical.dev,resources=redis/status,verbs=get;update;patch
 
 func (r *RedisReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	_ = context.Background()
-	_ = r.Log.WithValues("redis", req.NamespacedName)
+	ctx := context.Background()
+	log := r.Log.WithValues("redis", req.NamespacedName)
 
-	// your logic here
+	log.Info("reconciling redis")
 
+	var redis webappv1.Redis
+	if err := r.Get(ctx, req.NamespacedName, &redis); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	leaderDepl, err := r.leaderDeployment(redis)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	leaderSvc, err := r.desiredService(redis, "leader")
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	followerDepl, err := r.followerDeployment(redis)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	followerSvc, err := r.desiredService(redis, "follower")
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	applyOpts := []client.PatchOption{client.ForceOwnership, client.FieldOwner("redis-controller")}
+
+	err = r.Patch(ctx, &leaderDepl, client.Apply, applyOpts...)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	err = r.Patch(ctx, &leaderSvc, client.Apply, applyOpts...)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	err = r.Patch(ctx, &followerDepl, client.Apply, applyOpts...)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	err = r.Patch(ctx, &followerSvc, client.Apply, applyOpts...)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	redis.Status.LeaderService = leaderSvc.Name
+	redis.Status.FollowerService = followerSvc.Name
+
+	if err := r.Status().Update(ctx, &redis); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	log.Info("reconciled redis")
 	return ctrl.Result{}, nil
 }
 
 func (r *RedisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&webappv1.Redis{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
 		Complete(r)
 }
